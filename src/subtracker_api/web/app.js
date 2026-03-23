@@ -1,8 +1,8 @@
 const cadenceOrder = ["weekly", "monthly", "yearly"];
 const cadenceColors = {
-  weekly: "#00b9bb",
-  monthly: "#ff6b3d",
-  yearly: "#2b67ff",
+  weekly: "#d28d5b",
+  monthly: "#f0d2a9",
+  yearly: "#8592ba",
 };
 
 const formatterCache = new Map();
@@ -18,14 +18,18 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 function currencyFormatter(code) {
   if (!code || typeof code !== "string") {
     return fallbackMoney;
   }
+
   const normalized = code.toUpperCase();
   if (formatterCache.has(normalized)) {
     return formatterCache.get(normalized);
   }
+
   try {
     const formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -54,6 +58,14 @@ function monthlyEquivalent(item) {
 }
 
 function parseDate(value) {
+  if (typeof value === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (match) {
+      const [, year, month, day] = match;
+      return new Date(Number(year), Number(month) - 1, Number(day));
+    }
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return null;
@@ -81,8 +93,16 @@ function relativeLabel(days) {
   return `${Math.abs(days)} days ago`;
 }
 
+function titleCase(value) {
+  if (!value) {
+    return "";
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function emptyState(container, message) {
-  container.innerHTML = `<p class="empty">${message}</p>`;
+  const tag = container.tagName === "UL" ? "li" : "p";
+  container.innerHTML = `<${tag} class="empty">${message}</${tag}>`;
 }
 
 function renderMetrics(items) {
@@ -98,11 +118,9 @@ function renderMetrics(items) {
   document.getElementById("metric-active").textContent = String(active.length);
   document.getElementById("metric-monthly").textContent = formatAmount(monthly, "USD");
   document.getElementById("metric-annual").textContent = formatAmount(annual, "USD");
-
-  const nextLabel = nearest
-    ? `${nearest.item.name} - ${dateFormatter.format(nearest.date)}`
+  document.getElementById("metric-next").textContent = nearest
+    ? `${nearest.item.name} / ${dateFormatter.format(nearest.date)}`
     : "No upcoming";
-  document.getElementById("metric-next").textContent = nextLabel;
 }
 
 function renderSubscriptions(items) {
@@ -111,7 +129,10 @@ function renderSubscriptions(items) {
   count.textContent = `${items.length} plans`;
 
   if (!items.length) {
-    emptyState(list, "No subscriptions yet. Add one from API Docs and this panel updates instantly.");
+    emptyState(
+      list,
+      "No subscriptions yet. Post one from FastAPI docs and the ledger populates instantly.",
+    );
     return;
   }
 
@@ -123,7 +144,7 @@ function renderSubscriptions(items) {
     const dueDate = parseDate(item.next_charge_date);
 
     fragment.querySelector(".sub-name").textContent = item.name;
-    fragment.querySelector(".sub-meta").textContent = `${item.vendor} - ${item.cadence}`;
+    fragment.querySelector(".sub-meta").textContent = `${item.vendor} / ${titleCase(item.cadence)}`;
     fragment.querySelector(".sub-amount").textContent = formatAmount(item.amount, item.currency);
     fragment.querySelector(".sub-date").textContent = dueDate
       ? `Next ${dateFormatter.format(dueDate)}`
@@ -154,31 +175,29 @@ function renderCadence(items) {
   totalNode.textContent = String(total);
 
   if (total === 0) {
-    ring.style.background = "conic-gradient(#d9dde8 0 360deg)";
-    emptyState(legend, "Cadence mix appears after you create subscriptions.");
-    return;
+    ring.style.background = "conic-gradient(rgba(255, 255, 255, 0.12) 0 360deg)";
+  } else {
+    let cursor = 0;
+    const segments = cadenceOrder.map((key) => {
+      const portion = counts[key] / total;
+      const next = cursor + portion * 360;
+      const segment = `${cadenceColors[key]} ${cursor}deg ${next}deg`;
+      cursor = next;
+      return segment;
+    });
+    ring.style.background = `conic-gradient(${segments.join(",")})`;
   }
 
-  let cursor = 0;
-  const segments = cadenceOrder.map((key) => {
-    const portion = counts[key] / total;
-    const next = cursor + portion * 360;
-    const segment = `${cadenceColors[key]} ${cursor}deg ${next}deg`;
-    cursor = next;
-    return segment;
-  });
-
-  ring.style.background = `conic-gradient(${segments.join(",")})`;
   legend.innerHTML = "";
 
   cadenceOrder.forEach((key) => {
     const count = counts[key];
-    const percent = Math.round((count / total) * 100);
+    const percent = total === 0 ? 0 : Math.round((count / total) * 100);
     const li = document.createElement("li");
     li.innerHTML = `
       <span class="legend-left">
         <span class="swatch" style="background:${cadenceColors[key]}"></span>
-        <span>${key}</span>
+        <span>${titleCase(key)}</span>
       </span>
       <span>${count} (${percent}%)</span>
     `;
@@ -195,7 +214,7 @@ function renderRunway(items) {
     .slice(0, 6);
 
   if (!upcoming.length) {
-    emptyState(target, "No upcoming charges yet.");
+    emptyState(target, "Upcoming charge dates appear here as soon as renewals are scheduled.");
     return;
   }
 
@@ -203,13 +222,13 @@ function renderRunway(items) {
 
   upcoming.forEach(({ item, date }) => {
     const days = dayDistance(date);
-    const card = document.createElement("article");
-    card.className = "runway-item";
-    card.innerHTML = `
+    const node = document.createElement("article");
+    node.className = "runway-item";
+    node.innerHTML = `
       <h4>${item.name}</h4>
-      <p>${formatAmount(item.amount, item.currency)} - ${dateFormatter.format(date)} (${relativeLabel(days)})</p>
+      <p>${formatAmount(item.amount, item.currency)} / ${dateFormatter.format(date)} / ${relativeLabel(days)}</p>
     `;
-    target.appendChild(card);
+    target.appendChild(node);
   });
 }
 
@@ -226,7 +245,7 @@ function renderSignal(items) {
     .slice(0, 5);
 
   if (!ranked.length) {
-    emptyState(target, "Spending signal appears once active subscriptions are added.");
+    emptyState(target, "Normalized monthly pressure appears once active subscriptions are added.");
     return;
   }
 
@@ -251,11 +270,84 @@ function renderSignal(items) {
 }
 
 function applySpotlightMotion() {
+  if (prefersReducedMotion) {
+    return;
+  }
+
   const root = document.documentElement;
   document.addEventListener("pointermove", (event) => {
     root.style.setProperty("--mx", `${event.clientX}px`);
     root.style.setProperty("--my", `${event.clientY}px`);
   });
+}
+
+function applyRevealMotion() {
+  const nodes = document.querySelectorAll(".js-reveal");
+
+  if (prefersReducedMotion || !("IntersectionObserver" in window)) {
+    nodes.forEach((node) => node.classList.add("is-visible"));
+    return;
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        }
+      });
+    },
+    {
+      threshold: 0.2,
+      rootMargin: "0px 0px -8% 0px",
+    },
+  );
+
+  nodes.forEach((node, index) => {
+    node.style.setProperty("--reveal-delay", `${index * 70}ms`);
+    observer.observe(node);
+  });
+}
+
+function applyScrollMotion() {
+  if (prefersReducedMotion) {
+    return;
+  }
+
+  const root = document.documentElement;
+  const hero = document.querySelector(".hero");
+  let scheduled = false;
+
+  const update = () => {
+    const scrollable = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1);
+    const progress = Math.min(window.scrollY / scrollable, 1);
+    root.style.setProperty("--scroll-progress", progress.toFixed(3));
+    root.style.setProperty("--stage-shell-rotation", `${-8 + progress * 6}deg`);
+    root.style.setProperty("--orbit-a-rotation", `${16 + progress * 14}deg`);
+    root.style.setProperty("--orbit-b-rotation", `${68 - progress * 12}deg`);
+    root.style.setProperty("--orbit-c-rotation", `${-22 + progress * 10}deg`);
+
+    if (hero) {
+      const rect = hero.getBoundingClientRect();
+      const total = rect.height + window.innerHeight;
+      const heroProgress = Math.min(Math.max((window.innerHeight - rect.top) / total, 0), 1);
+      root.style.setProperty("--hero-offset", `${heroProgress * 14}px`);
+    }
+
+    scheduled = false;
+  };
+
+  const onScroll = () => {
+    if (!scheduled) {
+      scheduled = true;
+      window.requestAnimationFrame(update);
+    }
+  };
+
+  update();
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
 }
 
 async function hydrate() {
@@ -264,6 +356,7 @@ async function hydrate() {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
+
     const items = await response.json();
     renderMetrics(items);
     renderSubscriptions(items);
@@ -281,4 +374,6 @@ async function hydrate() {
 }
 
 applySpotlightMotion();
+applyRevealMotion();
+applyScrollMotion();
 hydrate();
