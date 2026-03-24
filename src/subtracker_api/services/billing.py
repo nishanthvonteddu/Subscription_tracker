@@ -3,7 +3,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 
-from subtracker_api.models.subscription import Cadence, SubscriptionCreate
+from subtracker_api.models.subscription import Cadence, SubscriptionCreate, SubscriptionStatus
 
 
 def _last_day_of_month(year: int, month: int) -> int:
@@ -53,15 +53,24 @@ def _next_yearly_occurrence(start_date: date, reference_date: date) -> date:
     return candidate
 
 
-def calculate_next_charge(payload: SubscriptionCreate, today: date | None = None) -> date:
+def calculate_next_charge(payload: SubscriptionCreate, today: date | None = None) -> date | None:
     reference = today or date.today()
 
+    if payload.status != SubscriptionStatus.ACTIVE:
+        return None
+
+    if payload.end_date is not None and reference > payload.end_date:
+        return None
+
     if payload.cadence == Cadence.WEEKLY:
-        return _next_weekly_occurrence(payload.start_date, reference)
+        candidate = _next_weekly_occurrence(payload.start_date, reference)
+    elif payload.cadence == Cadence.YEARLY:
+        candidate = _next_yearly_occurrence(payload.start_date, reference)
+    else:
+        anchor_day = payload.day_of_month or payload.start_date.day
+        candidate = _next_monthly_occurrence(payload.start_date, anchor_day, reference)
 
-    if payload.cadence == Cadence.YEARLY:
-        return _next_yearly_occurrence(payload.start_date, reference)
+    if payload.end_date is not None and candidate > payload.end_date:
+        return None
 
-    anchor_day = payload.day_of_month or payload.start_date.day
-    return _next_monthly_occurrence(payload.start_date, anchor_day, reference)
-
+    return candidate
