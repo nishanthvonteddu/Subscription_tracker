@@ -20,8 +20,12 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=web_dir), name="static")
 
     @app.get("/", include_in_schema=False)
-    def frontend() -> FileResponse:
+    def marketing_page() -> FileResponse:
         return FileResponse(web_dir / "index.html")
+
+    @app.get("/app", include_in_schema=False)
+    def dashboard_page() -> FileResponse:
+        return FileResponse(web_dir / "dashboard.html")
 
     app.include_router(health.router)
     app.include_router(subscriptions.router)
