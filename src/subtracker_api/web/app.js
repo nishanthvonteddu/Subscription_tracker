@@ -6,12 +6,18 @@ const cadenceColors = {
 };
 
 const statusOrder = ["active", "paused", "canceled"];
+const forecastMonthCount = 6;
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 const state = {
   items: [],
   filter: "all",
+  report: null,
+  selectedFile: null,
+  importingCandidateIds: new Set(),
+  loadError: null,
 };
 
-const forecastMonthCount = 6;
 const formatterCache = new Map();
 const fallbackMoney = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -49,7 +55,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
-const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const form = document.getElementById("subscription-form");
 const cadenceField = document.getElementById("subscription-cadence");
 const dayOfMonthField = document.getElementById("subscription-day-of-month");
@@ -57,6 +62,15 @@ const startDateField = document.getElementById("subscription-start-date");
 const endDateField = document.getElementById("subscription-end-date");
 const saveButton = document.getElementById("save-subscription");
 const formFeedback = document.getElementById("form-feedback");
+
+const statementForm = document.getElementById("statement-upload-form");
+const statementFileField = document.getElementById("statement-file");
+const statementDropzone = document.getElementById("statement-dropzone");
+const analyzeStatementButton = document.getElementById("analyze-statement");
+const importAllButton = document.getElementById("import-all-candidates");
+const statementFeedback = document.getElementById("statement-feedback");
+const candidateList = document.getElementById("candidate-list");
+
 let isApplyingFormDefaults = false;
 
 function currencyFormatter(code) {
@@ -103,6 +117,10 @@ function titleCase(value) {
 function parseDate(value) {
   if (!value) {
     return null;
+  }
+
+  if (value instanceof Date) {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
   }
 
   if (typeof value === "string") {
@@ -167,6 +185,16 @@ function monthlyEquivalent(item) {
   return item.amount;
 }
 
+function monthlyEquivalentCandidate(item) {
+  if (item.cadence === "weekly") {
+    return (item.latest_amount * 52) / 12;
+  }
+  if (item.cadence === "yearly") {
+    return item.latest_amount / 12;
+  }
+  return item.latest_amount;
+}
+
 function formatDateOrFallback(value, fallback = "Ongoing") {
   if (!value) {
     return fallback;
@@ -197,6 +225,18 @@ function formatCurrencyTotals(totals) {
   return [...totals.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([currency, amount]) => formatAmount(amount, currency))
+    .join(" + ");
+}
+
+function formatCurrencyTotalList(totals) {
+  if (!Array.isArray(totals) || !totals.length) {
+    return fallbackMoney.format(0);
+  }
+
+  return totals
+    .slice()
+    .sort((a, b) => b.amount - a.amount)
+    .map((item) => formatAmount(item.amount, item.currency))
     .join(" + ");
 }
 
@@ -333,6 +373,19 @@ function getNearestRenewal(items) {
     .sort((left, right) => left.date - right.date)[0];
 }
 
+function getPendingCandidates(report) {
+  if (!report?.candidates) {
+    return [];
+  }
+  return report.candidates.filter((item) => item.review_state !== "imported");
+}
+
+function getHighConfidenceCandidateIds(report) {
+  return getPendingCandidates(report)
+    .filter((item) => item.confidence_label !== "low")
+    .map((item) => item.candidate_id);
+}
+
 function setText(id, value) {
   const node = document.getElementById(id);
   if (node) {
@@ -344,13 +397,18 @@ function emptyState(container, message) {
   container.innerHTML = `<p class="empty">${message}</p>`;
 }
 
-function renderMetrics(items, buckets) {
+function renderMetrics(items, buckets, report) {
   const activeItems = items.filter((item) => item.status === "active");
   const monthlyTotals = buildCurrencyTotals(activeItems, monthlyEquivalent);
   const thisMonthTotals = buckets[0]?.totals || new Map();
   const nextRenewal = getNearestRenewal(items);
+  const pendingCandidates = getPendingCandidates(report);
 
   setText("metric-baseline", formatCurrencyTotals(monthlyTotals));
+  setText(
+    "metric-detected",
+    report ? formatCurrencyTotalList(report.summary.estimated_monthly_totals) : fallbackMoney.format(0),
+  );
   setText("metric-due-month", formatCurrencyTotals(thisMonthTotals));
   setText(
     "metric-next-renewal",
@@ -358,8 +416,17 @@ function renderMetrics(items, buckets) {
       ? `${nextRenewal.item.name} / ${shortDateFormatter.format(nextRenewal.date)}`
       : "No upcoming",
   );
-  setText("metric-tracked", String(items.length));
-  setText("last-sync", `Last sync ${dateTimeFormatter.format(new Date())}.`);
+  setText("metric-review", String(pendingCandidates.length));
+  setText(
+    "last-sync",
+    state.loadError || `Last sync ${dateTimeFormatter.format(new Date())}.`,
+  );
+  setText(
+    "overview-context",
+    report
+      ? `Latest statement ${report.filename} surfaced ${report.summary.recurring_candidate_count} recurring candidates across ${formatDateOrFallback(report.summary.coverage_start, "—")} to ${formatDateOrFallback(report.summary.coverage_end, "—")}.`
+      : "Upload a statement PDF to personalize the workspace.",
+  );
 }
 
 function renderForecast(buckets) {
@@ -396,7 +463,7 @@ function renderRenewalBoard(buckets) {
   if (!hasEntries) {
     emptyState(
       target,
-      "No active renewals are scheduled in the next 6 months. Add an active subscription to populate the month board.",
+      "No active renewals are scheduled in the next 6 months. Import or add an active subscription to populate the board.",
     );
     return;
   }
@@ -484,7 +551,7 @@ function renderLedger(items) {
     emptyState(
       rows,
       state.filter === "all"
-        ? "No subscriptions tracked yet. Use the add panel to create your first plan."
+        ? "No subscriptions tracked yet. Import a statement or use the manual panel to create your first plan."
         : `No ${state.filter} subscriptions are in the ledger right now.`,
     );
     return;
@@ -602,36 +669,244 @@ function renderFilterButtons() {
   });
 }
 
-function renderDashboard(items) {
+function renderImportSummary(report) {
+  if (!report) {
+    setText("import-filename", "No statement analyzed yet");
+    setText("import-period", "Not available");
+    setText("import-transactions", "0");
+    setText("import-candidates", "0");
+    setText("import-next-charge", "Not available");
+    setText(
+      "import-summary-note",
+      "The dashboard becomes personal once we can infer recurring charges from your own statement history.",
+    );
+    renderImportInsights(null);
+    importAllButton.disabled = true;
+    return;
+  }
+
+  const warnings = Array.isArray(report.summary?.warnings) ? report.summary.warnings : [];
+  const nextExpected = parseDate(report.summary.next_expected_charge);
+  const pendingCandidates = getPendingCandidates(report);
+
+  setText("import-filename", report.filename);
+  setText(
+    "import-period",
+    `${formatDateOrFallback(report.summary.coverage_start, "—")} to ${formatDateOrFallback(report.summary.coverage_end, "—")}`,
+  );
+  setText("import-transactions", String(report.summary.transaction_count));
+  setText("import-candidates", String(report.summary.recurring_candidate_count));
+  setText(
+    "import-next-charge",
+    nextExpected ? fullDateFormatter.format(nextExpected) : "Not available",
+  );
+  setText(
+    "import-summary-note",
+    warnings.length
+      ? warnings[0]
+      : `${pendingCandidates.length} candidate${pendingCandidates.length === 1 ? "" : "s"} are ready for review or import.`,
+  );
+  renderImportInsights(report);
+  importAllButton.disabled = getHighConfidenceCandidateIds(report).length === 0;
+}
+
+function renderImportInsights(report) {
+  const target = document.getElementById("import-insight-grid");
+
+  if (!report) {
+    target.innerHTML = `
+      <article class="insight-tile">
+        <p class="eyebrow">Recurring signal</p>
+        <strong>Waiting for statement data</strong>
+        <span>Upload a PDF to surface vendor concentration, cadence mix, and the next likely charge.</span>
+      </article>
+    `;
+    return;
+  }
+
+  const candidates = report.candidates || [];
+  const topCandidate = candidates
+    .slice()
+    .sort((left, right) => monthlyEquivalentCandidate(right) - monthlyEquivalentCandidate(left))[0];
+  const weeklyCount = candidates.filter((item) => item.cadence === "weekly").length;
+  const monthlyCount = candidates.filter((item) => item.cadence === "monthly").length;
+  const matchedCount = candidates.filter((item) => item.review_state === "matched").length;
+  const pendingCount = getPendingCandidates(report).length;
+
+  const insights = [
+    {
+      label: "Top recurring vendor",
+      value: topCandidate ? topCandidate.vendor : "No signal yet",
+      note: topCandidate
+        ? `${formatAmount(monthlyEquivalentCandidate(topCandidate), topCandidate.currency)} monthly equivalent`
+        : "Upload multiple statement periods for stronger vendor ranking.",
+    },
+    {
+      label: "Cadence mix",
+      value: `${monthlyCount} monthly / ${weeklyCount} weekly`,
+      note: `${candidates.length} recurring candidate${candidates.length === 1 ? "" : "s"} detected from the latest statement.`,
+    },
+    {
+      label: "Review queue",
+      value: `${pendingCount} ready`,
+      note:
+        matchedCount > 0
+          ? `${matchedCount} already map to an existing subscription and can update the dashboard in place.`
+          : "Imported candidates move straight into the forecast and renewal board.",
+    },
+  ];
+
+  target.innerHTML = "";
+  insights.forEach((insight) => {
+    const article = document.createElement("article");
+    article.className = "insight-tile";
+    article.innerHTML = `
+      <p class="eyebrow">${insight.label}</p>
+      <strong>${insight.value}</strong>
+      <span>${insight.note}</span>
+    `;
+    target.appendChild(article);
+  });
+}
+
+function renderCandidateList(report) {
+  const template = document.getElementById("candidate-row-template");
+
+  if (!report) {
+    emptyState(
+      candidateList,
+      "No statement has been analyzed yet. Upload a PDF to review recurring candidates before importing them.",
+    );
+    return;
+  }
+
+  if (!report.candidates.length) {
+    emptyState(
+      candidateList,
+      "No recurring candidates were detected from the latest statement. Upload a longer statement range for stronger detection.",
+    );
+    return;
+  }
+
+  candidateList.innerHTML = "";
+
+  report.candidates.forEach((candidate) => {
+    const fragment = template.content.cloneNode(true);
+    const root = fragment.querySelector(".candidate-row");
+    const action = fragment.querySelector(".candidate-action");
+    const nextExpected = parseDate(candidate.next_expected_on);
+    const matchLabel = candidate.matched_subscription_name
+      ? `Matched to ${candidate.matched_subscription_name}`
+      : "New to the dashboard";
+
+    root.classList.toggle("is-imported", candidate.review_state === "imported");
+    fragment.querySelector(".candidate-name").textContent = candidate.vendor;
+    fragment.querySelector(".candidate-meta").textContent =
+      `${candidate.occurrence_count} charges / ${titleCase(candidate.cadence)} / ${matchLabel}`;
+    fragment.querySelector(".candidate-note").textContent = candidate.notes || "Recurring pattern detected.";
+    fragment.querySelector(".candidate-amount").textContent = formatAmount(
+      candidate.latest_amount,
+      candidate.currency,
+    );
+    fragment.querySelector(".candidate-impact").textContent = `Monthly impact ${formatAmount(
+      monthlyEquivalentCandidate(candidate),
+      candidate.currency,
+    )}`;
+    fragment.querySelector(".candidate-last").textContent = `Last seen ${formatDateOrFallback(candidate.last_seen_on, "—")}`;
+    fragment.querySelector(".candidate-next").textContent = nextExpected
+      ? `Next expected ${formatDateOrFallback(nextExpected, "—")}`
+      : "Next expected date unavailable";
+
+    const cadenceBadge = fragment.querySelector(".candidate-cadence");
+    cadenceBadge.textContent = titleCase(candidate.cadence);
+    cadenceBadge.dataset.kind = candidate.cadence;
+
+    const confidenceBadge = fragment.querySelector(".candidate-confidence");
+    confidenceBadge.textContent = `${titleCase(candidate.confidence_label)} confidence`;
+    confidenceBadge.dataset.kind = candidate.confidence_label;
+
+    const reviewBadge = fragment.querySelector(".candidate-review");
+    reviewBadge.textContent =
+      candidate.review_state === "matched"
+        ? "Updates existing"
+        : candidate.review_state === "imported"
+          ? "Imported"
+          : "Ready to import";
+    reviewBadge.dataset.kind = candidate.review_state;
+
+    action.dataset.candidateId = candidate.candidate_id;
+    if (candidate.review_state === "imported") {
+      action.textContent = "Imported";
+      action.disabled = true;
+    } else if (state.importingCandidateIds.has(candidate.candidate_id)) {
+      action.textContent = "Applying...";
+      action.disabled = true;
+    } else if (candidate.review_state === "matched") {
+      action.textContent = "Update subscription";
+      action.classList.add("is-primary");
+    } else {
+      action.textContent = candidate.confidence_label === "low" ? "Import anyway" : "Import subscription";
+      action.classList.add("is-primary");
+    }
+
+    candidateList.appendChild(fragment);
+  });
+}
+
+function renderDashboard(items, report) {
   const buckets = buildForecastBuckets(items);
-  renderMetrics(items, buckets);
+  renderMetrics(items, buckets, report);
+  renderImportSummary(report);
+  renderCandidateList(report);
   renderForecast(buckets);
   renderRenewalBoard(buckets);
   renderLedger(items);
   renderCadence(items);
   renderStatusStats(items);
   renderFilterButtons();
+  syncDropzoneState();
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return response.json();
 }
 
 async function hydrate() {
-  try {
-    const response = await fetch("/subscriptions");
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+  const [subscriptionsResult, reportResult] = await Promise.allSettled([
+    fetchJson("/subscriptions"),
+    fetchJson("/statement-imports/latest"),
+  ]);
 
-    state.items = await response.json();
-    renderDashboard(state.items);
-  } catch {
+  if (subscriptionsResult.status === "fulfilled") {
+    state.items = subscriptionsResult.value;
+    state.loadError = null;
+  } else {
     state.items = [];
-    renderDashboard(state.items);
-    setText("last-sync", "Unable to reach the subscription API. Showing an empty workspace.");
+    state.loadError = "Unable to reach the subscription API. Showing an empty workspace.";
   }
+
+  if (reportResult.status === "fulfilled") {
+    state.report = reportResult.value || null;
+  } else {
+    state.report = null;
+  }
+
+  renderDashboard(state.items, state.report);
 }
 
 function setFormFeedback(message, isError = false) {
   formFeedback.textContent = message;
   formFeedback.classList.toggle("is-error", isError);
+}
+
+function setStatementFeedback(message, isError = false) {
+  statementFeedback.textContent = message;
+  statementFeedback.classList.toggle("is-error", isError);
 }
 
 function syncDayOfMonthField() {
@@ -665,7 +940,7 @@ function setFormDefaults() {
 function buildPayloadFromForm() {
   const formData = new FormData(form);
   const cadence = String(formData.get("cadence"));
-  const payload = {
+  return {
     name: String(formData.get("name") || "").trim(),
     vendor: String(formData.get("vendor") || "").trim(),
     amount: Number(formData.get("amount")),
@@ -680,8 +955,6 @@ function buildPayloadFromForm() {
         : null,
     notes: String(formData.get("notes") || "").trim() || null,
   };
-
-  return payload;
 }
 
 async function readErrorMessage(response) {
@@ -748,7 +1021,6 @@ function bindForm() {
         throw new Error(await readErrorMessage(response));
       }
 
-      setFormFeedback(`${payload.name} saved.`);
       setFormDefaults();
       await hydrate();
       setFormFeedback(`${payload.name} saved.`);
@@ -757,6 +1029,159 @@ function bindForm() {
     } finally {
       saveButton.disabled = false;
     }
+  });
+}
+
+function getSelectedFile() {
+  return state.selectedFile || statementFileField.files?.[0] || null;
+}
+
+function setSelectedFile(file) {
+  state.selectedFile = file || null;
+  syncDropzoneState();
+}
+
+function syncDropzoneState() {
+  const file = getSelectedFile();
+  statementDropzone.classList.toggle("is-armed", Boolean(file));
+  setText(
+    "statement-file-label",
+    file ? file.name : "Drop a PDF here or click to browse",
+  );
+  setText(
+    "statement-file-meta",
+    file
+      ? `${(file.size / 1024 / 1024).toFixed(2)} MB selected. Analyze to detect recurring charges.`
+      : "Text-based statements work best. Files are processed in memory and only recurring candidates are surfaced.",
+  );
+}
+
+async function uploadStatement(file) {
+  const formData = new FormData();
+  formData.set("file", file, file.name);
+
+  const response = await fetch("/statement-imports/pdf", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return response.json();
+}
+
+async function applyCandidateIds(candidateIds) {
+  if (!state.report || !candidateIds.length) {
+    return;
+  }
+
+  candidateIds.forEach((id) => state.importingCandidateIds.add(id));
+  renderCandidateList(state.report);
+  importAllButton.disabled = true;
+
+  try {
+    const response = await fetch(`/statement-imports/${state.report.id}/apply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ candidate_ids: candidateIds }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+
+    const body = await response.json();
+    state.report = body.report;
+    await hydrate();
+    setStatementFeedback(
+      `${body.created_subscriptions.length + body.updated_subscriptions.length} candidate${body.created_subscriptions.length + body.updated_subscriptions.length === 1 ? "" : "s"} applied to the dashboard.`,
+    );
+  } catch (error) {
+    setStatementFeedback(
+      error instanceof Error ? error.message : "Unable to apply the selected candidates.",
+      true,
+    );
+  } finally {
+    state.importingCandidateIds.clear();
+    renderCandidateList(state.report);
+    importAllButton.disabled = getHighConfidenceCandidateIds(state.report).length === 0;
+  }
+}
+
+function bindStatementUpload() {
+  statementFileField.addEventListener("change", (event) => {
+    const [file] = event.target.files || [];
+    setSelectedFile(file || null);
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    statementDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      statementDropzone.classList.add("is-dragover");
+    });
+  });
+
+  ["dragleave", "drop"].forEach((eventName) => {
+    statementDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      statementDropzone.classList.remove("is-dragover");
+    });
+  });
+
+  statementDropzone.addEventListener("drop", (event) => {
+    const [file] = event.dataTransfer?.files || [];
+    if (file) {
+      setSelectedFile(file);
+    }
+  });
+
+  statementForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const file = getSelectedFile();
+    if (!file) {
+      setStatementFeedback("Choose a PDF statement before analyzing it.", true);
+      return;
+    }
+
+    analyzeStatementButton.disabled = true;
+    setStatementFeedback(`Analyzing ${file.name}...`);
+
+    try {
+      state.report = await uploadStatement(file);
+      renderDashboard(state.items, state.report);
+      setStatementFeedback(`${file.name} analyzed. Review the recurring candidates below.`);
+    } catch (error) {
+      setStatementFeedback(
+        error instanceof Error ? error.message : "Unable to analyze the uploaded PDF.",
+        true,
+      );
+    } finally {
+      analyzeStatementButton.disabled = false;
+    }
+  });
+
+  importAllButton.addEventListener("click", async () => {
+    const candidateIds = getHighConfidenceCandidateIds(state.report);
+    if (!candidateIds.length) {
+      setStatementFeedback("No high-confidence recurring candidates are ready to import.", true);
+      return;
+    }
+    setStatementFeedback("Applying high-confidence candidates...");
+    await applyCandidateIds(candidateIds);
+  });
+
+  candidateList.addEventListener("click", async (event) => {
+    const button = event.target.closest(".candidate-action");
+    if (!button || !button.dataset.candidateId || button.disabled) {
+      return;
+    }
+
+    setStatementFeedback("Applying selected candidate...");
+    await applyCandidateIds([button.dataset.candidateId]);
   });
 }
 
@@ -805,6 +1230,7 @@ initializeTodayBadge();
 setFormDefaults();
 bindFilters();
 bindForm();
+bindStatementUpload();
 applySpotlightMotion();
 applyRevealMotion();
 hydrate();
