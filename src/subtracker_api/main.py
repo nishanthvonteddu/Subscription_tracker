@@ -4,8 +4,9 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from subtracker_api.api.routes import health, subscriptions
+from subtracker_api.api.routes import health, statement_imports, subscriptions
 from subtracker_api.core.config import settings
+from subtracker_api.repositories.memory_statement_import_repo import MemoryStatementImportRepository
 from subtracker_api.repositories.memory_subscription_repo import MemorySubscriptionRepository
 
 
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
         description="MVP API for tracking subscriptions and recurring charges.",
     )
     app.state.subscription_repo = MemorySubscriptionRepository()
+    app.state.statement_import_repo = MemoryStatementImportRepository()
     app.mount("/static", StaticFiles(directory=web_dir), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -29,6 +31,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(subscriptions.router)
+    app.include_router(statement_imports.router)
     return app
 
 
