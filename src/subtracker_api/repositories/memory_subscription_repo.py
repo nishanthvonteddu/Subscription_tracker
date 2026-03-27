@@ -20,7 +20,10 @@ class MemorySubscriptionRepository:
         self._items[item.id] = item
         return item
 
+    def update(self, item: Subscription) -> Subscription:
+        self._items[item.id] = item
+        return item
+
     def extend(self, items: Iterable[Subscription]) -> None:
         for item in items:
             self._items[item.id] = item
-
