@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Subscription Tracker dashboard for monitoring monthly spend, renewal timing, and subscription lifecycle dates."
+      content="Subscription Tracker dashboard for monitoring monthly spend, renewal timing, statement imports, and subscription lifecycle dates."
     />
     <title>Subscription Tracker Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -43,7 +43,7 @@
           <div class="topbar-links">
             <a class="topbar-link" href="/">Marketing</a>
             <a class="topbar-link" href="/docs">API Docs</a>
-            <a class="topbar-action" href="#manage">Add subscription</a>
+            <a class="topbar-action" href="#statement-import">Import statement</a>
           </div>
         </div>
       </div>
@@ -53,10 +53,10 @@
       <section class="overview js-reveal">
         <div class="overview-copy">
           <p class="eyebrow">Subscription workspace</p>
-          <h1>Monthly spend outlook</h1>
+          <h1>Recurring spend, sourced from the statement.</h1>
           <p class="overview-body">
-            Review recurring spend, upcoming renewals, and start or end dates
-            across every subscription you pay for.
+            Upload a statement PDF, review detected recurring charges, and let the
+            dashboard turn them into a living renewal and spend forecast.
           </p>
         </div>
 
@@ -64,6 +64,10 @@
           <article class="metric">
             <p>Monthly baseline</p>
             <h2 id="metric-baseline">$0.00</h2>
+          </article>
+          <article class="metric">
+            <p>Statement-detected</p>
+            <h2 id="metric-detected">$0.00</h2>
           </article>
           <article class="metric">
             <p>Due this month</p>
@@ -74,19 +78,109 @@
             <h2 id="metric-next-renewal">No upcoming</h2>
           </article>
           <article class="metric">
-            <p>Tracked plans</p>
-            <h2 id="metric-tracked">0</h2>
+            <p>Needs review</p>
+            <h2 id="metric-review">0</h2>
           </article>
         </div>
 
         <div class="overview-meta">
           <p id="last-sync">Waiting for subscription data.</p>
-          <p>Forecast panels include active subscriptions only.</p>
+          <p id="overview-context">Upload a statement PDF to personalize the workspace.</p>
         </div>
       </section>
 
       <div class="workspace">
         <section class="workspace-main">
+          <section class="band js-reveal" id="statement-import">
+            <div class="band-head">
+              <div>
+                <p class="eyebrow">Statement intelligence</p>
+                <h2>Upload a bank or card statement PDF</h2>
+              </div>
+              <p class="band-note">
+                We parse dated debit rows, detect recurring weekly or monthly charges,
+                and stage them for review before they change the live dashboard.
+              </p>
+            </div>
+
+            <div class="import-hub">
+              <form id="statement-upload-form" class="upload-panel">
+                <label class="dropzone" id="statement-dropzone" for="statement-file">
+                  <input
+                    id="statement-file"
+                    name="statement_pdf"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    hidden
+                  />
+                  <span class="dropzone-kicker">Statement PDF</span>
+                  <strong id="statement-file-label">Drop a PDF here or click to browse</strong>
+                  <span id="statement-file-meta">
+                    Text-based statements work best. Files are processed in memory and
+                    only recurring candidates are surfaced.
+                  </span>
+                </label>
+
+                <div class="upload-actions">
+                  <button class="primary-btn" id="analyze-statement" type="submit">
+                    Analyze PDF
+                  </button>
+                  <button class="secondary-btn" id="import-all-candidates" type="button">
+                    Import all high confidence
+                  </button>
+                </div>
+
+                <p id="statement-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+              </form>
+
+              <div class="import-summary-panel">
+                <div class="import-summary-copy">
+                  <p class="eyebrow">Latest import</p>
+                  <h3 id="import-filename">No statement analyzed yet</h3>
+                  <p id="import-summary-note" class="band-note import-note">
+                    The dashboard becomes personal once we can infer recurring charges
+                    from your own statement history.
+                  </p>
+                </div>
+
+                <dl class="summary-facts">
+                  <div>
+                    <dt>Coverage</dt>
+                    <dd id="import-period">Not available</dd>
+                  </div>
+                  <div>
+                    <dt>Debit rows parsed</dt>
+                    <dd id="import-transactions">0</dd>
+                  </div>
+                  <div>
+                    <dt>Recurring candidates</dt>
+                    <dd id="import-candidates">0</dd>
+                  </div>
+                  <div>
+                    <dt>Next expected charge</dt>
+                    <dd id="import-next-charge">Not available</dd>
+                  </div>
+                </dl>
+
+                <div id="import-insight-grid" class="import-insight-grid"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="band js-reveal" id="candidates">
+            <div class="band-head">
+              <div>
+                <p class="eyebrow">Recurring review</p>
+                <h2>Recurring candidates ready for the dashboard</h2>
+              </div>
+              <p class="band-note">
+                Each candidate shows cadence, confidence, recent history, and whether
+                it matches an existing subscription.
+              </p>
+            </div>
+            <div id="candidate-list" class="candidate-list"></div>
+          </section>
+
           <section class="band js-reveal" id="forecast">
             <div class="band-head">
               <div>
@@ -151,10 +245,12 @@
           <section class="side-panel js-reveal">
             <div class="band-head side-head">
               <div>
-                <p class="eyebrow">Add subscription</p>
-                <h2>Track a plan</h2>
+                <p class="eyebrow">Manual entry</p>
+                <h2>Track a plan by hand</h2>
               </div>
-              <p class="band-note">Active plans flow into the forecast automatically.</p>
+              <p class="band-note">
+                Use this when a plan is missing from the statement or you want to add it directly.
+              </p>
             </div>
 
             <form id="subscription-form" class="subscription-form">
@@ -278,10 +374,12 @@
           <section class="side-panel side-panel-secondary js-reveal">
             <div class="band-head side-head">
               <div>
-                <p class="eyebrow">Lifecycle summary</p>
+                <p class="eyebrow">Recurring profile</p>
                 <h2>Plan mix</h2>
               </div>
-              <p class="band-note">Cadence and status counts across the full ledger.</p>
+              <p class="band-note">
+                Cadence, status, and ending-soon counts across the full ledger.
+              </p>
             </div>
 
             <div class="mix-panel">
@@ -342,6 +440,34 @@
           <p class="renewal-end"></p>
         </div>
       </li>
+    </template>
+
+    <template id="candidate-row-template">
+      <article class="candidate-row">
+        <div class="candidate-primary">
+          <div class="candidate-head">
+            <h3 class="candidate-name"></h3>
+            <p class="candidate-meta"></p>
+          </div>
+          <p class="candidate-note"></p>
+        </div>
+        <div class="candidate-amount-block">
+          <strong class="candidate-amount"></strong>
+          <p class="candidate-impact"></p>
+        </div>
+        <div class="candidate-timing">
+          <p class="candidate-last"></p>
+          <p class="candidate-next"></p>
+        </div>
+        <div class="candidate-badges">
+          <span class="candidate-badge candidate-cadence"></span>
+          <span class="candidate-badge candidate-confidence"></span>
+          <span class="candidate-badge candidate-review"></span>
+        </div>
+        <div class="candidate-actions">
+          <button class="secondary-btn candidate-action" type="button"></button>
+        </div>
+      </article>
     </template>
 
     <script src="/static/app.js" defer></script>
