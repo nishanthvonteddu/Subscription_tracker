@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Sign in to Subscription Tracker to enter the subscription dashboard workspace."
+    />
+    <title>Sign In | Subscription Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/auth.css" />
+  </head>
+  <body>
+    <div class="auth-atmosphere" aria-hidden="true">
+      <span class="auth-glow auth-glow-a"></span>
+      <span class="auth-glow auth-glow-b"></span>
+      <span class="auth-grid"></span>
+      <span class="auth-grain"></span>
+    </div>
+    <div class="auth-spotlight" aria-hidden="true"></div>
+
+    <header class="auth-header js-reveal">
+      <div class="auth-header-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark">ST</span>
+          <span class="brand-lockup">
+            <strong>Subscription Tracker</strong>
+            <span>Recurring spend workspace</span>
+          </span>
+        </a>
+
+        <nav class="auth-nav" aria-label="Primary">
+          <a class="auth-link" href="/">Marketing</a>
+          <a class="auth-link" href="/app">Open App</a>
+          <a class="auth-link" href="/docs">API Docs</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="auth-shell">
+      <section class="auth-layout">
+        <div class="auth-story js-reveal">
+          <p class="eyebrow">Access workspace</p>
+          <h1>Sign in so the dashboard can feel like your operating surface.</h1>
+          <p class="auth-body">
+            Username and password are collected in the interface today, but access is
+            still open while backend authentication is being wired.
+          </p>
+
+          <dl class="auth-facts">
+            <div>
+              <dt>Statement imports</dt>
+              <dd>Detect recurring weekly and monthly charges from PDF statements.</dd>
+            </div>
+            <div>
+              <dt>Renewal board</dt>
+              <dd>Read the exact month, day, and lifecycle context for each renewal.</dd>
+            </div>
+            <div>
+              <dt>Focused planning</dt>
+              <dd>Move the workspace to any month and inspect renewals, starts, and endings.</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="auth-panel js-reveal">
+          <div class="auth-panel-copy">
+            <p class="eyebrow">Sign in</p>
+            <h2>Use any credentials for now.</h2>
+            <p class="auth-note">
+              This page is UI-complete, but authorization is still permissive so anyone can continue into the app.
+            </p>
+          </div>
+
+          <form id="auth-form" class="auth-form">
+            <label class="field">
+              <span>Username</span>
+              <input
+                id="auth-username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                maxlength="32"
+                required
+              />
+            </label>
+
+            <label class="field">
+              <span>Password</span>
+              <input
+                id="auth-password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                maxlength="128"
+                required
+              />
+            </label>
+
+            <button class="primary-btn" id="auth-submit" type="submit">Sign in</button>
+            <p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite">
+              Everyone can enter today. The username is stored locally so the dashboard can greet you by name.
+            </p>
+          </form>
+
+          <div class="auth-foot">
+            <span class="auth-badge">Open access mode</span>
+            <a class="auth-inline-link" href="/app">Skip directly to the dashboard</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/auth.js" defer></script>
+  </body>
+</html>
