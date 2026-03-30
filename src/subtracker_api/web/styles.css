@@ -927,7 +927,7 @@ a {
 .ledger-columns,
 .ledger-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) 0.7fr 0.7fr 0.8fr 0.8fr 0.8fr 0.9fr;
+  grid-template-columns: minmax(0, 1.45fr) 0.68fr 0.68fr 0.8fr 0.8fr 0.8fr 0.9fr minmax(7.5rem, 0.95fr);
   gap: 1rem;
 }
 
@@ -958,6 +958,16 @@ a {
 .ledger-status,
 .ledger-cadence {
   margin-top: 0;
+}
+
+.ledger-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ledger-action {
+  width: 100%;
+  justify-content: center;
 }
 
 .status-text {
@@ -1015,6 +1025,10 @@ a {
   margin-top: 1.2rem;
   display: grid;
   gap: 1rem;
+}
+
+.form-mode-note {
+  margin: 0;
 }
 
 .form-grid {

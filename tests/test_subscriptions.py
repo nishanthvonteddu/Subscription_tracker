@@ -29,6 +29,55 @@ def test_create_and_list_subscription(client: TestClient) -> None:
     assert data[0]["vendor"] == "Netflix"
 
 
+def test_update_subscription_reuses_existing_record(client: TestClient) -> None:
+    create_response = client.post(
+        "/subscriptions",
+        json={
+            "name": "Netflix",
+            "vendor": "Netflix",
+            "amount": 19.99,
+            "currency": "USD",
+            "cadence": "monthly",
+            "start_date": "2026-03-01",
+            "day_of_month": 1,
+            "notes": "Original plan",
+        },
+    )
+    created = create_response.json()
+
+    update_response = client.put(
+        f"/subscriptions/{created['id']}",
+        json={
+            "name": "Netflix Premium",
+            "vendor": "Netflix",
+            "amount": 24.99,
+            "currency": "USD",
+            "cadence": "monthly",
+            "status": "paused",
+            "start_date": "2026-03-01",
+            "day_of_month": 15,
+            "notes": "Updated plan",
+        },
+    )
+    assert update_response.status_code == 200
+
+    updated = update_response.json()
+    assert updated["id"] == created["id"]
+    assert updated["created_at"] == created["created_at"]
+    assert updated["name"] == "Netflix Premium"
+    assert updated["amount"] == 24.99
+    assert updated["status"] == "paused"
+    assert updated["day_of_month"] == 15
+    assert updated["notes"] == "Updated plan"
+    assert updated["next_charge_date"] is None
+
+    list_response = client.get("/subscriptions")
+    assert list_response.status_code == 200
+    data = list_response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "Netflix Premium"
+
+
 def test_canceled_subscription_has_no_next_charge(client: TestClient) -> None:
     payload = {
         "name": "Gym Membership",

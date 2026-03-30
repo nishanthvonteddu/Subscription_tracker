@@ -16,6 +16,7 @@ const state = {
   report: null,
   selectedFile: null,
   importingCandidateIds: new Set(),
+  editingSubscriptionId: null,
   loadError: null,
   selectedDate: parseDate(new Date()) || new Date(),
   viewerName: readStoredViewerName(),
@@ -68,12 +69,22 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 const form = document.getElementById("subscription-form");
+const nameField = document.getElementById("subscription-name");
+const vendorField = document.getElementById("subscription-vendor");
+const amountField = document.getElementById("subscription-amount");
+const currencyField = document.getElementById("subscription-currency");
 const cadenceField = document.getElementById("subscription-cadence");
+const statusField = document.getElementById("subscription-status");
 const dayOfMonthField = document.getElementById("subscription-day-of-month");
 const startDateField = document.getElementById("subscription-start-date");
 const endDateField = document.getElementById("subscription-end-date");
+const notesField = document.getElementById("subscription-notes");
 const saveButton = document.getElementById("save-subscription");
+const resetFormButton = document.getElementById("reset-subscription-form");
 const formFeedback = document.getElementById("form-feedback");
+const manualEntryHeading = document.getElementById("manual-entry-heading");
+const manualEntryNote = document.getElementById("manual-entry-note");
+const manualEntryState = document.getElementById("manual-entry-state");
 
 const statementForm = document.getElementById("statement-upload-form");
 const statementFileField = document.getElementById("statement-file");
@@ -443,6 +454,58 @@ function emptyState(container, message) {
   container.innerHTML = `<p class="empty">${message}</p>`;
 }
 
+function getSubscriptionById(subscriptionId) {
+  return state.items.find((item) => item.id === subscriptionId) || null;
+}
+
+function syncFormMode() {
+  const editingSubscription = state.editingSubscriptionId
+    ? getSubscriptionById(state.editingSubscriptionId)
+    : null;
+  const isEditing = Boolean(editingSubscription);
+
+  manualEntryHeading.textContent = isEditing ? "Edit tracked subscription" : "Track a plan by hand";
+  manualEntryNote.textContent = isEditing
+    ? "Update the subscription details below and save to refresh the ledger and forecast."
+    : "Use this when a plan is missing from the statement or you want to add it directly.";
+  manualEntryState.textContent = isEditing
+    ? `Editing ${editingSubscription.name}. Save changes or clear the form to stop editing.`
+    : "Create a new subscription from scratch.";
+  saveButton.textContent = isEditing ? "Update subscription" : "Save subscription";
+  resetFormButton.textContent = isEditing ? "Cancel edit" : "Clear";
+}
+
+function populateForm(subscription) {
+  nameField.value = subscription.name || "";
+  vendorField.value = subscription.vendor || "";
+  amountField.value = subscription.amount ?? "";
+  currencyField.value = normalizeCurrency(subscription.currency);
+  cadenceField.value = subscription.cadence || "monthly";
+  statusField.value = subscription.status || "active";
+  startDateField.value = subscription.start_date || "";
+  endDateField.value = subscription.end_date || "";
+  dayOfMonthField.value = subscription.day_of_month ?? "";
+  notesField.value = subscription.notes || "";
+  syncDayOfMonthField();
+  syncDateConstraints();
+}
+
+function beginEditingSubscription(subscriptionId) {
+  const subscription = getSubscriptionById(subscriptionId);
+  if (!subscription) {
+    return;
+  }
+
+  state.editingSubscriptionId = subscription.id;
+  populateForm(subscription);
+  syncFormMode();
+  setFormFeedback(`Editing ${subscription.name}.`);
+  document.getElementById("manage").scrollIntoView({
+    behavior: prefersReducedMotion ? "auto" : "smooth",
+    block: "start",
+  });
+}
+
 function buildYearRange(items, report, selectedDate) {
   const yearValues = [
     selectedDate.getFullYear(),
@@ -738,6 +801,13 @@ function renderLedger(items) {
     fragment.querySelector(".ledger-end").textContent = formatDateOrFallback(endDate);
     fragment.querySelector(".ledger-next").textContent = formatDateOrFallback(nextCharge, "No upcoming");
 
+    const actions = fragment.querySelector(".ledger-actions");
+    actions.innerHTML = `
+      <button class="secondary-btn ledger-action" data-action="edit" data-subscription-id="${item.id}" type="button">
+        Edit
+      </button>
+    `;
+
     rows.appendChild(fragment);
   });
 }
@@ -1012,6 +1082,7 @@ function renderCandidateList(report) {
 
 function renderDashboard(items, report) {
   const buckets = buildForecastBuckets(items, state.selectedDate);
+  syncFormMode();
   renderViewerContext();
   renderPeriodControls(items, report);
   renderPeriodFacts(items, buckets);
@@ -1056,6 +1127,10 @@ async function hydrate() {
     state.report = null;
   }
 
+  if (state.editingSubscriptionId && !getSubscriptionById(state.editingSubscriptionId)) {
+    setFormDefaults();
+  }
+
   renderDashboard(state.items, state.report);
 }
 
@@ -1085,15 +1160,17 @@ function syncDateConstraints() {
 }
 
 function setFormDefaults() {
+  state.editingSubscriptionId = null;
   isApplyingFormDefaults = true;
   form.reset();
   isApplyingFormDefaults = false;
   startDateField.value = toInputDate(new Date());
-  document.getElementById("subscription-currency").value = "USD";
+  currencyField.value = "USD";
   cadenceField.value = "monthly";
-  document.getElementById("subscription-status").value = "active";
+  statusField.value = "active";
   syncDayOfMonthField();
   syncDateConstraints();
+  syncFormMode();
   setFormFeedback("");
 }
 
@@ -1192,6 +1269,19 @@ function bindFilters() {
   });
 }
 
+function bindLedgerActions() {
+  document.getElementById("subscription-rows").addEventListener("click", (event) => {
+    const button = event.target.closest(".ledger-action");
+    if (!button || !button.dataset.subscriptionId) {
+      return;
+    }
+
+    if (button.dataset.action === "edit") {
+      beginEditingSubscription(button.dataset.subscriptionId);
+    }
+  });
+}
+
 function bindForm() {
   cadenceField.addEventListener("change", syncDayOfMonthField);
   startDateField.addEventListener("change", syncDateConstraints);
@@ -1206,18 +1296,29 @@ function bindForm() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const editingSubscription = state.editingSubscriptionId
+      ? getSubscriptionById(state.editingSubscriptionId)
+      : null;
+    if (state.editingSubscriptionId && !editingSubscription) {
+      setFormFeedback("This subscription is no longer available. Clear the form and try again.", true);
+      return;
+    }
+    const isEditing = Boolean(editingSubscription);
     saveButton.disabled = true;
-    setFormFeedback("Saving subscription...");
+    setFormFeedback(isEditing ? "Updating subscription..." : "Saving subscription...");
 
     try {
       const payload = buildPayloadFromForm();
-      const response = await fetch("/subscriptions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        isEditing ? `/subscriptions/${editingSubscription.id}` : "/subscriptions",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+      );
 
       if (!response.ok) {
         throw new Error(await readErrorMessage(response));
@@ -1225,9 +1326,14 @@ function bindForm() {
 
       setFormDefaults();
       await hydrate();
-      setFormFeedback(`${payload.name} saved.`);
+      setFormFeedback(`${payload.name} ${isEditing ? "updated" : "saved"}.`);
     } catch (error) {
-      setFormFeedback(error instanceof Error ? error.message : "Unable to save subscription.", true);
+      setFormFeedback(
+        error instanceof Error
+          ? error.message
+          : `Unable to ${isEditing ? "update" : "save"} subscription.`,
+        true,
+      );
     } finally {
       saveButton.disabled = false;
     }
@@ -1432,6 +1538,7 @@ initializeTodayBadge();
 setFormDefaults();
 bindPeriodControls();
 bindFilters();
+bindLedgerActions();
 bindForm();
 bindStatementUpload();
 applySpotlightMotion();
