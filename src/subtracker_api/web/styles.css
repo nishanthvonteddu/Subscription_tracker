@@ -973,6 +973,11 @@ a {
   justify-content: center;
 }
 
+.ledger-action[data-tone="danger"] {
+  border-color: rgba(255, 177, 166, 0.34);
+  color: #ffd0c9;
+}
+
 .status-text {
   display: inline-flex;
   align-items: center;

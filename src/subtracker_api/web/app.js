@@ -777,6 +777,7 @@ function ledgerActionsForItem(item) {
     actions.push({ kind: "status", label: "Resume", nextStatus: "active" });
   }
 
+  actions.push({ kind: "delete", label: "Delete", tone: "danger" });
   return actions;
 }
 
@@ -793,6 +794,9 @@ function renderLedgerActionMarkup(item) {
       ];
       if (action.nextStatus) {
         attributes.push(`data-status="${action.nextStatus}"`);
+      }
+      if (action.tone) {
+        attributes.push(`data-tone="${action.tone}"`);
       }
       if (isBusy) {
         attributes.push("disabled");
@@ -1353,6 +1357,46 @@ async function updateSubscriptionStatus(subscriptionId, nextStatus, actionLabel)
   }
 }
 
+async function deleteSubscription(subscriptionId) {
+  const subscription = getSubscriptionById(subscriptionId);
+  if (!subscription) {
+    setFormFeedback("This subscription is no longer available.", true);
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Delete ${subscription.name}? This removes it from the ledger and forecast.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  state.busySubscriptionIds.add(subscriptionId);
+  renderLedger(state.items);
+  setFormFeedback(`Deleting ${subscription.name}...`);
+
+  try {
+    const response = await fetch(`/subscriptions/${subscriptionId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+
+    await hydrate();
+    setFormFeedback(`${subscription.name} deleted.`);
+  } catch (error) {
+    setFormFeedback(
+      error instanceof Error ? error.message : "Unable to delete the subscription.",
+      true,
+    );
+  } finally {
+    state.busySubscriptionIds.delete(subscriptionId);
+    renderLedger(state.items);
+  }
+}
+
 function bindLedgerActions() {
   document.getElementById("subscription-rows").addEventListener("click", async (event) => {
     const button = event.target.closest(".ledger-action");
@@ -1371,6 +1415,11 @@ function bindLedgerActions() {
         button.dataset.status,
         button.textContent.trim(),
       );
+      return;
+    }
+
+    if (button.dataset.action === "delete") {
+      await deleteSubscription(button.dataset.subscriptionId);
     }
   });
 }

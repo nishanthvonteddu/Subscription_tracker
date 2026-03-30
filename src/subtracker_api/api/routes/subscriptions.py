@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 
 from subtracker_api.api.deps import get_subscription_repo
 from subtracker_api.models.subscription import (
@@ -106,3 +107,14 @@ def update_subscription_status(
         next_charge_date=calculate_next_charge(next_payload),
     )
     return repo.update(updated)
+
+
+@router.delete("/{subscription_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_subscription(
+    subscription_id: UUID,
+    repo: MemorySubscriptionRepository = Depends(get_subscription_repo),
+) -> Response:
+    deleted = repo.delete(subscription_id)
+    if deleted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

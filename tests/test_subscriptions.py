@@ -112,6 +112,30 @@ def test_update_subscription_status_recalculates_next_charge(client: TestClient)
     assert resumed["next_charge_date"] >= date.today().isoformat()
 
 
+def test_delete_subscription_removes_it_from_the_ledger(client: TestClient) -> None:
+    create_response = client.post(
+        "/subscriptions",
+        json={
+            "name": "Gym Pass",
+            "vendor": "Peak Club",
+            "amount": 44.0,
+            "currency": "USD",
+            "cadence": "monthly",
+            "start_date": "2026-03-10",
+            "day_of_month": 10,
+        },
+    )
+    created = create_response.json()
+
+    delete_response = client.delete(f"/subscriptions/{created['id']}")
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+
+    list_response = client.get("/subscriptions")
+    assert list_response.status_code == 200
+    assert list_response.json() == []
+
+
 def test_canceled_subscription_has_no_next_charge(client: TestClient) -> None:
     payload = {
         "name": "Gym Membership",
